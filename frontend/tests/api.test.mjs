@@ -4,6 +4,7 @@ import { createServer, resolveConfig } from "vite";
 
 let server;
 let apiModule;
+let authSessionModule;
 let eventExportModule;
 let eventCsvModule;
 let originalFetch;
@@ -15,6 +16,7 @@ before(async () => {
     appType: "custom",
   });
   apiModule = await server.ssrLoadModule("/src/api.ts");
+  authSessionModule = await server.ssrLoadModule("/src/authSession.ts");
   eventExportModule = await server.ssrLoadModule("/src/eventExport.ts");
   eventCsvModule = await server.ssrLoadModule("/src/eventCsv.ts");
   originalFetch = globalThis.fetch;
@@ -102,6 +104,27 @@ test("session restoration rejects an absent backend cookie", async () => {
   };
   await assert.rejects(new apiModule.SafeVisionApi().currentUser(), error => error instanceof apiModule.ApiError && error.status === 401);
   assert.equal(requestedInit.credentials, "include");
+});
+
+test("initial session 401 is a normal signed-out state, while network and 5xx errors stay visible", async () => {
+  const translate = key => ({
+    authServiceUnreachable: "connection problem",
+    authServerError: "server problem",
+    accessFailed: "access problem",
+  })[key];
+  assert.equal(authSessionModule.sessionRestoreMessage(new apiModule.ApiError(401, "Unauthenticated"), translate), "");
+  globalThis.fetch = async () => { throw new TypeError("network failure"); };
+  await assert.rejects(new apiModule.SafeVisionApi().currentUser(), error => {
+    assert.equal(error.status, 0);
+    assert.equal(authSessionModule.sessionRestoreMessage(error, translate), "connection problem");
+    return true;
+  });
+  globalThis.fetch = async () => new Response(JSON.stringify({ detail: "Unavailable" }), { status: 503 });
+  await assert.rejects(new apiModule.SafeVisionApi().currentUser(), error => {
+    assert.equal(error.status, 503);
+    assert.equal(authSessionModule.sessionRestoreMessage(error, translate), "server problem");
+    return true;
+  });
 });
 
 test("logout uses the backend endpoint and accepts HTTP 204", async () => {

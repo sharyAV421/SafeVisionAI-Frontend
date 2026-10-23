@@ -2,6 +2,7 @@ import "./style.css";
 import { formatDate, formatNumber, getStoredLanguage, translate, type Language, type TranslationKey } from "./i18n";
 import { loadAllEvents } from "./eventExport";
 import { serializeCsvRows } from "./eventCsv";
+import { sessionRestoreMessage } from "./authSession";
 import {
   ApiError,
   SafeVisionApi,
@@ -108,13 +109,12 @@ class SafeVisionFrontend {
       return true;
     } catch (error) {
       this.backendSession = false;
-      if (error instanceof ApiError && error.status === 401) {
-        this.authStatus = t("accessUnavailable");
-      } else {
-        console.error("Safe Vision AI: no se pudo validar la sesión", error);
-        this.authStatus = t("accessFailed");
+      this.authStatus = sessionRestoreMessage(error, t);
+      if (!(error instanceof ApiError && error.status === 401)) console.error("Safe Vision AI: no se pudo validar la sesión", error);
+      if (import.meta.env.DEV && error instanceof ApiError && error.status === 401) {
+        await this.inspectAuthContract();
+        this.authStatus = "";
       }
-      if (import.meta.env.DEV) await this.inspectAuthContract();
       return false;
     }
   }
