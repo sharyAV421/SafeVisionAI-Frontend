@@ -1,6 +1,7 @@
 import es from "./es";
 
 const en = {
+  fullName: "Name", invitationCode: "Invitation code", confirmPassword: "Confirm password", newPassword: "New password", resetPassword: "Reset password", sendRecovery: "Send link", backToLogin: "Back to sign in", passwordRules: "Password must contain at least 8 characters, one letter and one number.", passwordMismatch: "Passwords do not match.", invalidInvitation: "The invitation code is invalid.", emailAlreadyRegistered: "This email is already registered.", invalidResetLink: "The link is invalid or has expired.", resetSuccess: "Password reset. Sign in with your new password.", checkSpam: "Also check your spam folder.", detectedClass: "Detected class", confidence: "Confidence", evidence: "Event photo",
   languageName: "English",
   authChecking: "Checking sign-in availability…", sessionValidated: "Session validated by the backend.",
   cameraActive: "Active", cameraInactive: "Inactive", cameraDisconnected: "Disconnected", cameraMaintenance: "Maintenance",

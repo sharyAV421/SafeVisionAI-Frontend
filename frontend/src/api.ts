@@ -143,6 +143,15 @@ export class SafeVisionApi {
   currentUser(): Promise<AuthSession> { return this.request("/api/auth/me"); }
   logout(): Promise<void> { return this.request("/api/auth/logout", { method: "POST" }); }
   wsTicket(): Promise<{ ticket: string }> { return this.request("/api/auth/ws-ticket"); }
+  register(name: string, email: string, password: string, invitation_code: string): Promise<unknown> {
+    return this.request("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email, password, invitation_code }) });
+  }
+  forgotPassword(email: string): Promise<{ detail: string }> {
+    return this.request("/api/auth/password/forgot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+  }
+  resetPassword(token: string, new_password: string): Promise<void> {
+    return this.request("/api/auth/password/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, new_password }) });
+  }
   alertWebSocketUrl(ticket: string): string {
     const url = new URL("/ws/alertas", this.baseUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

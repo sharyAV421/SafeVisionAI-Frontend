@@ -3,6 +3,7 @@ import { formatDate, formatNumber, getStoredLanguage, translate, type Language, 
 import { loadAllEvents } from "./eventExport";
 import { serializeCsvRows } from "./eventCsv";
 import { sessionRestoreMessage } from "./authSession";
+import { isValidPassword } from "./passwordPolicy";
 import {
   ApiError,
   SafeVisionApi,
@@ -127,6 +128,10 @@ class SafeVisionFrontend {
   async signInBackend(email: string, password: string): Promise<void> {
     const login = await api.login(email, password);
     if (login.authenticated !== true || !login.user?.id) throw new Error(t("identityFailed"));
+    await this.activateBackendSession();
+  }
+
+  async activateBackendSession(): Promise<void> {
     const session = await api.currentUser();
     if (session.authenticated !== true || !session.user?.id) throw new Error(t("identityFailed"));
     this.backendSession = true;
@@ -605,6 +610,8 @@ class AccessGate {
   private submitting = false;
   constructor(root: HTMLDivElement, privateApp: SafeVisionFrontend) { this.root = root; this.privateApp = privateApp; }
   async start(forceLogin = false): Promise<void> {
+    const token = new URL(window.location.href).searchParams.get("token");
+    if (token !== null) { this.showAuthForm("reset", token); return; }
     const localModeAvailable = await this.localDevModeAvailable();
     if (!forceLogin && localModeAvailable) {
       try {
@@ -665,7 +672,64 @@ class AccessGate {
       finally { this.submitting = false; if (button.isConnected) button.disabled = false; }
     });
     this.root.querySelector("#toggle-password")?.addEventListener("click", event => { const input = this.root.querySelector<HTMLInputElement>("#login-password"); const button = event.currentTarget as HTMLButtonElement; if (!input) return; input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? t("show") : t("hide"); button.setAttribute("aria-label", input.type === "password" ? t("showPassword") : t("hidePassword")); });
-    this.root.querySelectorAll<HTMLElement>("[data-auth-info]").forEach(button => button.addEventListener("click", () => { const message = this.root.querySelector<HTMLElement>(".auth-message"); if (message) message.textContent = t(button.dataset.authInfo === "registration" ? "registrationUnavailable" : "recoveryUnavailable"); }));
+    this.root.querySelectorAll<HTMLElement>("[data-auth-info]").forEach(button => button.addEventListener("click", () => this.showAuthForm(button.dataset.authInfo === "registration" ? "register" : "forgot")));
+  }
+  private showAuthForm(mode: "register" | "forgot" | "reset", token = ""): void {
+    const title = mode === "register" ? t("createAccount") : mode === "forgot" ? t("forgotPassword") : t("resetPassword");
+    const email = mode !== "reset" ? `<label for="auth-email">${t("email")}</label><input id="auth-email" name="email" type="email" autocomplete="email" required>` : "";
+    const name = mode === "register" ? `<label for="auth-name">${t("fullName")}</label><input id="auth-name" name="name" autocomplete="name" required>` : "";
+    const password = mode !== "forgot" ? `<label for="auth-password">${t(mode === "reset" ? "newPassword" : "password")}</label><input id="auth-password" name="password" type="password" autocomplete="new-password" required aria-describedby="password-rules"><small id="password-rules">${t("passwordRules")}</small>` : "";
+    const confirm = mode === "reset" ? `<label for="auth-confirm">${t("confirmPassword")}</label><input id="auth-confirm" name="confirm" type="password" autocomplete="new-password" required>` : "";
+    const invitation = mode === "register" ? `<label for="auth-invitation">${t("invitationCode")}</label><input id="auth-invitation" name="invitation" autocomplete="off" required>` : "";
+    this.root.innerHTML = `<main class="access-shell"><section class="access-brand"><div class="brand-lockup intro">${brandLogo("login-wordmark")}</div><div class="access-copy"><h1><span>${t("introMain")}</span><em>${t("introSupport")}</em></h1></div></section><section class="access-panel"><form class="login-card" id="auth-form"><h2>${title}</h2>${name}${email}${password}${confirm}${invitation}<div class="auth-message" role="status" aria-live="polite"></div><button class="button primary" type="submit">${mode === "forgot" ? t("sendRecovery") : title}</button><div class="auth-options"><button type="button" id="auth-back">${t("backToLogin")}</button></div></form><footer>${t("loginBrandFooter")}</footer></section></main>`;
+    this.root.querySelector("#auth-back")?.addEventListener("click", () => {
+      if (mode === "reset") { const url = new URL(window.location.href); url.searchParams.delete("token"); history.replaceState(history.state, "", url); }
+      void this.start(true);
+    });
+    this.root.querySelector<HTMLFormElement>("#auth-form")?.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (this.submitting) return;
+      const form = event.currentTarget as HTMLFormElement;
+      const data = new FormData(form);
+      const value = (key: string) => String(data.get(key) ?? "");
+      const message = form.querySelector<HTMLElement>(".auth-message");
+      if (mode !== "forgot" && !isValidPassword(value("password"))) { if (message) message.textContent = t("passwordRules"); return; }
+      if (mode === "reset" && value("password") !== value("confirm")) { if (message) message.textContent = t("passwordMismatch"); return; }
+      const submit = form.querySelector<HTMLButtonElement>("button[type='submit']");
+      this.submitting = true;
+      if (submit) { submit.disabled = true; submit.setAttribute("aria-busy", "true"); }
+      try {
+        if (mode === "register") {
+          await api.register(value("name").trim(), value("email").trim(), value("password"), value("invitation"));
+          await this.privateApp.activateBackendSession();
+        } else if (mode === "forgot") {
+          const result = await api.forgotPassword(value("email").trim());
+          if (message) {
+            const detail = document.createElement("div");
+            detail.textContent = result.detail;
+            const spam = document.createElement("div");
+            spam.textContent = t("checkSpam");
+            message.replaceChildren(detail, spam);
+          }
+        } else {
+          await api.resetPassword(token, value("password"));
+          const url = new URL(window.location.href); url.searchParams.delete("token"); history.replaceState(history.state, "", url);
+          this.privateApp.setAuthenticationStatus(t("resetSuccess"));
+          await this.start(true);
+        }
+      } catch (error) {
+        if (message) {
+          if (error instanceof ApiError && mode === "register" && error.status === 403) message.textContent = t("invalidInvitation");
+          else if (error instanceof ApiError && mode === "register" && error.status === 409) message.textContent = t("emailAlreadyRegistered");
+          else if (error instanceof ApiError && mode === "reset" && error.status === 400) message.textContent = t("invalidResetLink");
+          else if (error instanceof ApiError && error.status === 422 && mode !== "forgot") message.textContent = error.message;
+          else message.textContent = this.authError(error);
+        }
+      } finally {
+        this.submitting = false;
+        if (submit?.isConnected) { submit.disabled = false; submit.removeAttribute("aria-busy"); }
+      }
+    });
   }
   private async localDevModeAvailable(): Promise<boolean> {
     if (!isLocalhost()) return false;
