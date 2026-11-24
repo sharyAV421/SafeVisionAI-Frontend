@@ -66,6 +66,11 @@ class SafeVisionFrontend {
   private alertRefreshTimer: number | null = null;
   private cameraPollTimer: number | null = null;
   private alertStreamState: "connecting" | "connected" | "reconnecting" = "connecting";
+  // Configure this with the IoT MJPEG URL that the user's browser can reach.
+  private readonly liveVideoUrl = (import.meta.env.VITE_VIDEO_URL || "").trim();
+  private liveVideo: HTMLImageElement | null = null;
+  private liveVideoTimer: number | null = null;
+  private liveVideoRetryTimer: number | null = null;
   private loading = false;
   private actionError = "";
   private exportingCsv = false;
@@ -160,6 +165,7 @@ class SafeVisionFrontend {
       if (error instanceof ApiError && error.status === 401) {
         this.backendSession = false;
         this.stopAlertStream();
+        this.stopLiveVideo();
         this.authStatus = t("sessionExpired");
         this.clearProtectedData();
         if (this.root) await new AccessGate(this.root, this).start();
@@ -194,6 +200,7 @@ class SafeVisionFrontend {
         this.alertSocket = null;
         if (event.code === 4401) {
           this.backendSession = false;
+          this.stopLiveVideo();
           if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
           this.cameraPollTimer = null;
           this.authStatus = t("sessionExpired");
@@ -249,6 +256,56 @@ class SafeVisionFrontend {
     if (!this.root) return;
     this.root.innerHTML = `<div class="app-frame">${this.topbar()}<main class="main-area" aria-busy="${this.loading}"><section class="view-content">${this.pageView()}</section></main></div>`;
     this.bind();
+    if (this.page === "cameras" && this.cameras.length) this.mountLiveVideo(); else this.stopLiveVideo();
+  }
+  /** Attach the IoT MJPEG stream without restarting it on each UI render. */
+  private mountLiveVideo(): void {
+    if (!this.liveVideoUrl) return;
+    let streamUrl: URL;
+    try {
+      streamUrl = new URL(this.liveVideoUrl);
+      if (!["http:", "https:"].includes(streamUrl.protocol)) throw new Error("Unsupported video URL protocol");
+    } catch (error) {
+      console.error("Safe Vision AI: VITE_VIDEO_URL must be an absolute HTTP(S) URL", error);
+      return;
+    }
+    const player = this.root?.querySelector<HTMLElement>(".video-player");
+    if (!player) return;
+    if (!this.liveVideo) {
+      const video = document.createElement("img");
+      video.className = "video-live";
+      video.alt = t("liveVideo");
+      video.addEventListener("error", () => {
+        if (this.liveVideo !== video) return;
+        video.closest(".video-player")?.classList.remove("is-live");
+        if (this.liveVideoRetryTimer !== null) window.clearTimeout(this.liveVideoRetryTimer);
+        this.liveVideoRetryTimer = window.setTimeout(() => {
+          this.liveVideoRetryTimer = null;
+          if (this.liveVideo !== video) return;
+          const retryUrl = new URL(this.liveVideoUrl);
+          retryUrl.searchParams.set("retry", String(Date.now()));
+          video.src = retryUrl.toString();
+        }, 5000);
+      });
+      video.src = streamUrl.toString();
+      this.liveVideo = video;
+      // MJPEG does not fire a reliable "load" event, so check whether frames have arrived.
+      this.liveVideoTimer = window.setInterval(() => {
+        this.liveVideo?.closest(".video-player")?.classList.toggle("is-live", (this.liveVideo?.naturalWidth ?? 0) > 0);
+      }, 1000);
+    }
+    player.prepend(this.liveVideo);
+    player.classList.toggle("is-live", this.liveVideo.naturalWidth > 0);
+  }
+  private stopLiveVideo(): void {
+    if (this.liveVideoTimer !== null) window.clearInterval(this.liveVideoTimer);
+    if (this.liveVideoRetryTimer !== null) window.clearTimeout(this.liveVideoRetryTimer);
+    this.liveVideoTimer = null;
+    this.liveVideoRetryTimer = null;
+    if (!this.liveVideo) return;
+    this.liveVideo.removeAttribute("src");
+    this.liveVideo.remove();
+    this.liveVideo = null;
   }
   private wordmark(className = ""): string {
     return brandLogo(className);
@@ -286,7 +343,7 @@ class SafeVisionFrontend {
   private camerasView(): string {
     const selected = this.cameras[0];
     const cameraCards = this.cameras.length ? `${this.cameras.map(c => this.cameraRow(c)).join("")}${this.resourceNotice("cameras")}` : this.dataOrEmpty("cameras", `<div class="empty-state compact-empty">${icon("cameras")}<b>${t("noCameraRecords")}</b><p>${t("noCamerasAvailable")}</p></div>`);
-    const playerState = `<div class="video-waiting">${icon("cameras")}<strong>${selected ? t("cameraStreamUnavailable") : t("noStream")}</strong><span>${selected ? t("noVideoNow") : t("noStream")}</span></div>`;
+    const playerState = `<div class="video-waiting">${icon("cameras")}<strong>${!this.liveVideoUrl ? t("cameraStreamUnavailable") : selected ? t("cameraStreamUnavailable") : t("noStream")}</strong><span>${!this.liveVideoUrl ? t("videoUrlNotConfigured") : selected ? t("noVideoNow") : t("noStream")}</span></div>`;
     const selectedStatus = selected ? this.cameraStatusLabel(selected.status) : t("noData");
     return `${this.pageHeading("camerasTitle", "camerasSubtitle")}<div class="monitor-layout"><section class="panel monitor-player-card"><div class="video-player" role="img" aria-label="${t("videoPlayer")}">${playerState}<div class="player-controls"><button type="button" disabled aria-label="${t("playbackUnavailable")}">▶</button><span>--:--</span><div class="player-track" aria-hidden="true"><i></i></div><span>--:--</span></div></div><div class="camera-info monitor-info"><div><h2>${selected ? escapeHtml(selected.name) : t("camera")}</h2><p>${selected ? `${t("camera")} ${formatNumber(selected.camera_id, language)} · ${t("location")} ${formatNumber(selected.location_id, language)}` : t("noCameraSelected")}</p></div><span class="state-tag">${selectedStatus}</span>${selected ? `<small>${t("cameraAddress")}: ${escapeHtml(selected.ip_address)}</small>` : ""}</div></section><aside class="panel camera-list"><div class="panel-title"><div><h2>${t("availableCameras")}</h2></div></div>${cameraCards}</aside></div>`;
   }
@@ -397,6 +454,7 @@ class SafeVisionFrontend {
     if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
     this.cameraPollTimer = null;
     this.stopAlertStream();
+    this.stopLiveVideo();
     this.backendSession = false;
     this.clearProtectedData();
     this.authStatus = t("loggedOut");
@@ -405,6 +463,7 @@ class SafeVisionFrontend {
   private async logoutSession(): Promise<void> {
     if (this.localDevSession) return this.logoutLocalSession();
     this.stopAlertStream();
+    this.stopLiveVideo();
     if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
     this.cameraPollTimer = null;
     let logoutFailed = false;
@@ -467,6 +526,7 @@ class SafeVisionFrontend {
         this.authStatus = t("sessionExpired");
         this.backendSession = false;
         this.stopAlertStream();
+        this.stopLiveVideo();
         if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
         this.cameraPollTimer = null;
         this.clearProtectedData();
