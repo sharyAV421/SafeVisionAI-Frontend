@@ -4,7 +4,7 @@ import { createServer } from "vite";
 
 let server, apiModule, policy, presentation, originalFetch;
 before(async () => {
-  server = await createServer({ configFile: "vite.config.ts", server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  server = await createServer({ configFile: "vite.config.ts", server: { middlewareMode: true, ws: false }, appType: "custom" });
   apiModule = await server.ssrLoadModule("/src/api.ts");
   policy = await server.ssrLoadModule("/src/passwordPolicy.ts");
   presentation = await server.ssrLoadModule("/src/eventPresentation.ts");
