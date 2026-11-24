@@ -4,6 +4,7 @@ import { loadAllEvents } from "./eventExport";
 import { serializeCsvRows } from "./eventCsv";
 import { sessionRestoreMessage } from "./authSession";
 import { isValidPassword } from "./passwordPolicy";
+import { eventConfidence, eventEvidenceUrl, mergeStreamAlert, mergeStreamEvent } from "./eventPresentation";
 import {
   ApiError,
   SafeVisionApi,
@@ -198,7 +199,23 @@ class SafeVisionFrontend {
         let message: AlertStreamMessage;
         try { message = JSON.parse(String(event.data)) as AlertStreamMessage; }
         catch { return; }
-        if (message.tipo === "alerta_nueva" || message.tipo === "evento_revisado") this.scheduleAlertRefresh();
+        if (message.tipo === "alerta_nueva" || message.tipo === "evento_revisado") {
+          if (message.alerta?.event && typeof message.alerta.id_alerta === "number"
+            && typeof message.alerta.nivel === "string" && typeof message.alerta.estado === "string"
+            && typeof message.alerta.event.id === "number" && typeof message.alerta.event.type === "string"
+            && typeof message.alerta.event.date === "string" && typeof message.alerta.event.time === "string"
+            && typeof message.alerta.event.location === "string" && typeof message.alerta.event.camera === "string") {
+            this.alerts = mergeStreamAlert(this.alerts, message.alerta);
+          }
+          const updatedEvent = message.evento ?? message.alerta?.event;
+          if (updatedEvent && typeof updatedEvent.id === "number") {
+            this.events = mergeStreamEvent(this.events, updatedEvent);
+            this.recentEvents = mergeStreamEvent(this.recentEvents, updatedEvent);
+            this.alerts = this.alerts.map(alert => alert.event.id === updatedEvent.id ? { ...alert, event: { ...alert.event, ...updatedEvent } } : alert);
+          }
+          this.render();
+          this.scheduleAlertRefresh();
+        }
       };
       socket.onclose = event => {
         if (this.alertSocket !== socket) return;
@@ -366,12 +383,12 @@ class SafeVisionFrontend {
     const state = this.resourceNotice(resource);
     const actionState = this.actionError ? this.inlineError(this.actionError, false) : "";
     const stateRow = (content: string) => content ? `<tr><td colspan="7">${content}</td></tr>` : "";
-    const rows = events.length ? `${stateRow(actionState || state)}${events.map(event => `<tr><td><b>${escapeHtml(event.type)}</b><small>${escapeHtml(event.subject)}${event.description ? ` · ${escapeHtml(event.description)}` : ""}</small></td><td>${escapeHtml(formatDate(event.date, language))}<small>${escapeHtml(event.time)} (${t("sourceTime")})</small></td><td>${escapeHtml(event.location)}</td><td>${escapeHtml(event.camera)}</td><td><span class="risk ${this.riskTone(event.priority)}">${escapeHtml(event.priority)}</span></td><td>${escapeHtml(event.status)}</td><td><button class="link-button" data-event-id="${event.id}">${t("details")}</button>${!compact && event.status === "Pendiente" ? `<button class="link-button" data-review-id="${event.id}">${t("review")}</button>` : ""}</td></tr>`).join("")}` : stateRow(actionState || state) || `<tr><td colspan="7"><div class="table-empty">${icon("shield")}<b>${t("noActivity")}</b><span>${t("noEventsToShow")}</span></div></td></tr>`;
+    const rows = events.length ? `${stateRow(actionState || state)}${events.map(event => `<tr><td><b>${escapeHtml(event.type)}</b><small>${escapeHtml(event.subject)}${event.description ? ` · ${escapeHtml(event.description)}` : ""}</small>${this.eventMetadata(event)}</td><td>${escapeHtml(formatDate(event.date, language))}<small>${escapeHtml(event.time)} (${t("sourceTime")})</small></td><td>${escapeHtml(event.location)}</td><td>${escapeHtml(event.camera)}</td><td><span class="risk ${this.riskTone(event.priority)}">${escapeHtml(event.priority)}</span></td><td>${escapeHtml(event.status)}</td><td><button class="link-button" data-event-id="${event.id}">${t("details")}</button>${!compact && event.status === "Pendiente" ? `<button class="link-button" data-review-id="${event.id}">${t("review")}</button>` : ""}</td></tr>`).join("")}` : stateRow(actionState || state) || `<tr><td colspan="7"><div class="table-empty">${icon("shield")}<b>${t("noActivity")}</b><span>${t("noEventsToShow")}</span></div></td></tr>`;
     return `<div class="table-wrap"><table><thead><tr><th scope="col">${t("event")}</th><th scope="col">${t("dateTime")}</th><th scope="col">${t("locationHeader")}</th><th scope="col">${t("cameraHeader")}</th><th scope="col">${t("risk")}</th><th scope="col">${t("eventStatus")}</th><th scope="col" aria-label="${t("actions")}"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   private alertsView(): string {
     const state = this.resourceNotice("alerts");
-    const rows = this.alerts.length ? `${this.actionError ? `<tr><td colspan="5">${this.inlineError(this.actionError, false)}</td></tr>` : ""}${state ? `<tr><td colspan="5">${state}</td></tr>` : ""}${this.alerts.map(a => `<tr><td><span class="risk ${this.riskTone(a.nivel)}">${escapeHtml(a.nivel)}</span></td><td>${escapeHtml(formatDate(a.event.date, language))}<small>${escapeHtml(a.event.time)}</small></td><td><b>${escapeHtml(a.event.type)}</b><small>${escapeHtml(a.event.location)} · ${escapeHtml(a.event.camera)}</small></td><td>${escapeHtml(a.estado)}</td><td><button class="link-button" data-event-id="${a.event.id}">${t("viewEvent")}</button>${a.estado.toLowerCase() === "pendiente" ? `<button class="link-button" data-alert-seen="${a.id_alerta}">${t("markSeen")}</button>` : ""}</td></tr>`).join("")}` : (this.actionError ? this.inlineError(this.actionError, false) : state) ? `<tr><td colspan="5">${this.actionError ? this.inlineError(this.actionError, false) : state}</td></tr>` : `<tr><td colspan="5"><div class="table-empty">${icon("shield")}<b>${t("noAlertsRows")}</b><span>${t("noAlertsToShow")}</span></div></td></tr>`;
+    const rows = this.alerts.length ? `${this.actionError ? `<tr><td colspan="5">${this.inlineError(this.actionError, false)}</td></tr>` : ""}${state ? `<tr><td colspan="5">${state}</td></tr>` : ""}${this.alerts.map(a => `<tr><td><span class="risk ${this.riskTone(a.nivel)}">${escapeHtml(a.nivel)}</span></td><td>${escapeHtml(formatDate(a.event.date, language))}<small>${escapeHtml(a.event.time)}</small></td><td><b>${escapeHtml(a.event.type)}</b><small>${escapeHtml(a.event.location)} · ${escapeHtml(a.event.camera)}</small>${this.eventMetadata(a.event)}</td><td>${escapeHtml(a.estado)}</td><td><button class="link-button" data-event-id="${a.event.id}">${t("viewEvent")}</button>${a.estado.toLowerCase() === "pendiente" ? `<button class="link-button" data-alert-seen="${a.id_alerta}">${t("markSeen")}</button>` : ""}</td></tr>`).join("")}` : (this.actionError ? this.inlineError(this.actionError, false) : state) ? `<tr><td colspan="5">${this.actionError ? this.inlineError(this.actionError, false) : state}</td></tr>` : `<tr><td colspan="5"><div class="table-empty">${icon("shield")}<b>${t("noAlertsRows")}</b><span>${t("noAlertsToShow")}</span></div></td></tr>`;
     const streamState = this.backendSession ? `<p class="alert-stream-state" role="status">${t(this.alertStreamState === "connected" ? "alertsLive" : this.alertStreamState === "reconnecting" ? "alertsReconnecting" : "alertsConnecting")}</p>` : "";
     return `${this.pageHeading("alertsTitle", "alertsSubtitle")} ${streamState}<article class="panel table-panel"><div class="table-wrap"><table><thead><tr><th scope="col">${t("level")}</th><th scope="col">${t("dateTime")}</th><th scope="col">${t("event")}</th><th scope="col">${t("eventStatus")}</th><th scope="col">${t("actions")}</th></tr></thead><tbody>${rows}</tbody></table></div></article>`;
   }
@@ -393,7 +410,13 @@ class SafeVisionFrontend {
     return key ? t(key) : escapeHtml(rawStatus);
   }
   private alertRow(alert: AlertRecord): string {
-    return `<div class="list-row"><span class="risk ${this.riskTone(alert.nivel)}">${escapeHtml(alert.nivel)}</span><div><b>${escapeHtml(alert.event.type)}</b><small>${escapeHtml(formatDate(alert.event.date, language))} ${escapeHtml(alert.event.time)} · ${escapeHtml(alert.event.location)}</small></div></div>`;
+    return `<div class="list-row"><span class="risk ${this.riskTone(alert.nivel)}">${escapeHtml(alert.nivel)}</span><div><b>${escapeHtml(alert.event.type)}</b><small>${escapeHtml(formatDate(alert.event.date, language))} ${escapeHtml(alert.event.time)} · ${escapeHtml(alert.event.location)}</small>${this.eventMetadata(alert.event)}</div></div>`;
+  }
+  private eventMetadata(event: RiskEvent): string {
+    const confidence = eventConfidence(event.confidence);
+    const evidence = eventEvidenceUrl(event.evidence_url);
+    const label = typeof event.detected_class_label === "string" && event.detected_class_label.trim() ? `<small>${t("detectedClass")}: ${escapeHtml(event.detected_class_label)}</small>` : "";
+    return `${label}${confidence !== null ? `<small>${t("confidence")}: ${confidence}</small>` : ""}${evidence ? `<img class="event-evidence" src="${escapeHtml(evidence)}" alt="${t("evidence")}" loading="lazy" referrerpolicy="no-referrer">` : ""}`;
   }
   private riskTone(value: string): string { return value.toLowerCase() === "alto" ? "high" : value.toLowerCase() === "medio" ? "medium" : "low"; }
   private empty(title: TranslationKey, detail: TranslationKey): string { return `<div class="empty-state">${icon("shield")}<b>${t(title)}</b><p>${t(detail)}</p></div>`; }
@@ -570,7 +593,7 @@ class SafeVisionFrontend {
   private showEventDialog(event: RiskEvent): void {
     const dialog = document.createElement("dialog"); dialog.className = "detail-dialog";
     const fields: Array<[TranslationKey, unknown]> = [["description", event.description], ["date", formatDate(event.date, language)], ["time", `${event.time} (${t("sourceTime")})`], ["risk", event.priority], ["eventStatus", event.status], ["location", event.location], ["camera", event.camera], ["subject", event.subject]];
-    dialog.innerHTML = `<form method="dialog"><button class="dialog-close" aria-label="${t("close")}">×</button></form><span class="eyebrow">${t("eventDetail")} ${formatNumber(event.id, language)}</span><h2>${escapeHtml(event.type)}</h2><dl>${fields.map(([key, value]) => `<div><dt>${t(key)}</dt><dd>${escapeHtml(value || t("noDescriptionValue"))}</dd></div>`).join("")}</dl>${event.status === "Pendiente" ? `<button class="button primary" data-review-id="${event.id}">${t("markReviewed")}</button>` : ""}`;
+    dialog.innerHTML = `<form method="dialog"><button class="dialog-close" aria-label="${t("close")}">×</button></form><span class="eyebrow">${t("eventDetail")} ${formatNumber(event.id, language)}</span><h2>${escapeHtml(event.type)}</h2><dl>${fields.map(([key, value]) => `<div><dt>${t(key)}</dt><dd>${escapeHtml(value || t("noDescriptionValue"))}</dd></div>`).join("")}</dl>${this.eventMetadata(event)}${event.status === "Pendiente" ? `<button class="button primary" data-review-id="${event.id}">${t("markReviewed")}</button>` : ""}`;
     this.root?.append(dialog); dialog.showModal(); dialog.addEventListener("close", () => dialog.remove());
     dialog.querySelector("[data-review-id]")?.addEventListener("click", () => void this.reviewEvent(event.id));
   }

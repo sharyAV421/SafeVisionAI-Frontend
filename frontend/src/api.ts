@@ -13,6 +13,9 @@ export interface RiskEvent {
   priority: Priority;
   status: EventStatus;
   description?: string | null;
+  detected_class_label?: string | null;
+  confidence?: number | null;
+  evidence_url?: string | null;
 }
 
 export interface AlertRecord {
@@ -140,9 +143,6 @@ export class SafeVisionApi {
   login(email: string, password: string): Promise<AuthSession> {
     return this.request("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
   }
-  currentUser(): Promise<AuthSession> { return this.request("/api/auth/me"); }
-  logout(): Promise<void> { return this.request("/api/auth/logout", { method: "POST" }); }
-  wsTicket(): Promise<{ ticket: string }> { return this.request("/api/auth/ws-ticket"); }
   register(name: string, email: string, password: string, invitation_code: string): Promise<unknown> {
     return this.request("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, email, password, invitation_code }) });
   }
@@ -152,6 +152,9 @@ export class SafeVisionApi {
   resetPassword(token: string, new_password: string): Promise<void> {
     return this.request("/api/auth/password/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, new_password }) });
   }
+  currentUser(): Promise<AuthSession> { return this.request("/api/auth/me"); }
+  logout(): Promise<void> { return this.request("/api/auth/logout", { method: "POST" }); }
+  wsTicket(): Promise<{ ticket: string }> { return this.request("/api/auth/ws-ticket"); }
   alertWebSocketUrl(ticket: string): string {
     const url = new URL("/ws/alertas", this.baseUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
