@@ -98,13 +98,27 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiConfigurationError extends Error {
+  constructor() {
+    super("Falta configurar VITE_API_URL para conectar con la API.");
+    this.name = "ApiConfigurationError";
+  }
+}
+
+export function requireApiUrl(value: string | undefined): string {
+  const url = value?.trim();
+  if (!url) throw new ApiConfigurationError();
+  return url.replace(/\/$/, "");
+}
+
 export class SafeVisionApi {
-  readonly baseUrl = (import.meta.env.VITE_API_URL || "https://safevision-backend-pw6t.onrender.com").replace(/\/$/, "");
+  get baseUrl(): string { return requireApiUrl(import.meta.env.VITE_API_URL); }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const baseUrl = this.baseUrl;
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`, {
+      response = await fetch(`${baseUrl}${path}`, {
         ...init,
         signal: init.signal ?? AbortSignal.timeout(90_000),
         credentials: "include",

@@ -1,4 +1,5 @@
 const es = {
+  apiUrlMissing: "Falta configurar VITE_API_URL para conectar con la API.",
   fullName: "Nombre", invitationCode: "Código de invitación", confirmPassword: "Confirmar contraseña", newPassword: "Nueva contraseña", resetPassword: "Restablecer contraseña", sendRecovery: "Enviar enlace", backToLogin: "Volver a iniciar sesión", passwordRules: "La contraseña debe tener al menos 8 caracteres, una letra y un número.", passwordMismatch: "Las contraseñas no coinciden.", invalidInvitation: "El código de invitación no es válido.", emailAlreadyRegistered: "El correo ya está registrado.", invalidResetLink: "El enlace no es válido o ha expirado.", resetSuccess: "Contraseña restablecida. Inicia sesión con tu nueva contraseña.", checkSpam: "Revisa también la carpeta de spam.", detectedClass: "Clase detectada", confidence: "Confianza", evidence: "Fotografía del evento",
   languageName: "Español",
   authChecking: "Verificando disponibilidad de autenticación…", sessionValidated: "Sesión validada por el backend.",

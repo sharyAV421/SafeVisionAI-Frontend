@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createServer } from "vite";
 
-let server, apiModule, policy, presentation, originalFetch;
+let server, apiModule, policy, presentation, originalFetch, originalApiUrl;
 before(async () => {
+  originalApiUrl = process.env.VITE_API_URL;
+  process.env.VITE_API_URL = "https://api.example.test";
   server = await createServer({ configFile: "vite.config.ts", server: { middlewareMode: true, ws: false }, appType: "custom" });
   apiModule = await server.ssrLoadModule("/src/api.ts");
   policy = await server.ssrLoadModule("/src/passwordPolicy.ts");
   presentation = await server.ssrLoadModule("/src/eventPresentation.ts");
   originalFetch = globalThis.fetch;
 });
-after(async () => { globalThis.fetch = originalFetch; await server?.close(); });
+after(async () => {
+  globalThis.fetch = originalFetch;
+  if (originalApiUrl === undefined) delete process.env.VITE_API_URL;
+  else process.env.VITE_API_URL = originalApiUrl;
+  await server?.close();
+});
 
 test("registration, recovery and reset send documented bodies with credentials", async () => {
   const calls = [];

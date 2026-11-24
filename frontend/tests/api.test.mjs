@@ -8,8 +8,11 @@ let authSessionModule;
 let eventExportModule;
 let eventCsvModule;
 let originalFetch;
+let originalApiUrl;
 
 before(async () => {
+  originalApiUrl = process.env.VITE_API_URL;
+  process.env.VITE_API_URL = "https://api.example.test";
   server = await createServer({
     configFile: "vite.config.ts",
     server: { middlewareMode: true },
@@ -24,7 +27,27 @@ before(async () => {
 
 after(async () => {
   globalThis.fetch = originalFetch;
+  if (originalApiUrl === undefined) delete process.env.VITE_API_URL;
+  else process.env.VITE_API_URL = originalApiUrl;
   await server?.close();
+});
+
+test("missing API configuration is visible and no request is sent", async () => {
+  for (const value of [undefined, "", "   "]) {
+    assert.throws(() => apiModule.requireApiUrl(value), apiModule.ApiConfigurationError);
+  }
+  assert.equal(apiModule.requireApiUrl(" https://api.example.test/ "), "https://api.example.test");
+  const api = new apiModule.SafeVisionApi();
+  Object.defineProperty(api, "baseUrl", { get: () => apiModule.requireApiUrl(undefined) });
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error("unexpected request"); };
+  await assert.rejects(api.currentUser(), error => {
+    assert.ok(error instanceof apiModule.ApiConfigurationError);
+    assert.match(error.message, /VITE_API_URL/);
+    assert.equal(authSessionModule.sessionRestoreMessage(error, key => key), "apiUrlMissing");
+    return true;
+  });
+  assert.equal(called, false);
 });
 
 test("events sends supported filters and includes credentials", async () => {

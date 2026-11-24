@@ -6,6 +6,7 @@ import { sessionRestoreMessage } from "./authSession";
 import { isValidPassword } from "./passwordPolicy";
 import { eventConfidence, eventEvidenceUrl, mergeStreamAlert, mergeStreamEvent } from "./eventPresentation";
 import {
+  ApiConfigurationError,
   ApiError,
   SafeVisionApi,
   type AlertStreamMessage,
@@ -655,7 +656,7 @@ class AccessGate {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const backendSignInAvailable = this.privateApp.canSignInBackend;
     const primaryAvailable = backendSignInAvailable || localModeAvailable;
-    if (isLocalhost() && !localModeAvailable && !backendSignInAvailable) this.privateApp.setAuthenticationStatus(t("localDevNotConfigured"));
+    if (isLocalhost() && !localModeAvailable && !backendSignInAvailable) this.privateApp.setAuthenticationStatus(t(import.meta.env.VITE_API_URL?.trim() ? "localDevNotConfigured" : "apiUrlMissing"));
     this.root.innerHTML = `<main class="access-shell"><section class="access-brand"><div class="brand-lockup">${brandLogo("login-wordmark")}</div><div class="access-copy"><h1><span>${t("introMain")}</span><em>${t("introSupport")}</em></h1></div></section><section class="access-panel"><form class="login-card" id="login-form"><h2>${t("loginTitle")}</h2><label for="login-email">${t("email")}</label><input type="email" id="login-email" name="email" autocomplete="username" aria-label="${t("email")}" required><label for="login-password">${t("password")}</label><div class="password-field"><input type="password" id="login-password" name="password" autocomplete="current-password" aria-label="${t("password")}" required><button type="button" id="toggle-password" aria-label="${t("showPassword")}">${t("show")}</button></div><div class="auth-message" role="alert">${escapeHtml(this.privateApp.authenticationStatus)}</div><button class="button primary" type="submit" ${primaryAvailable ? "" : "disabled"}>${backendSignInAvailable ? t("loginTitle") : t("localDevLogin")}</button>${backendSignInAvailable && localModeAvailable ? `<button class="button secondary local-dev-login" type="button">${t("localDevLogin")}</button>` : ""}<div class="auth-options"><button type="button" data-auth-info="registration">${t("createAccount")}</button><button type="button" data-auth-info="recovery">${t("forgotPassword")}</button></div></form><footer>${t("loginBrandFooter")}</footer></section></main>`;
     if (!reduceMotion) this.root.querySelector(".brand-lockup")?.classList.add("intro");
     this.root.querySelector<HTMLFormElement>("#login-form")?.addEventListener("submit", async event => {
@@ -768,6 +769,7 @@ class AccessGate {
     await this.privateApp.startPrivate();
   }
   private authError(error: unknown): string {
+    if (error instanceof ApiConfigurationError) return t("apiUrlMissing");
     if (!(error instanceof ApiError)) return t("accessFailed");
     if (error.status === 401) return t("invalidBackendCredentials");
     if (error.status === 429) return t("loginRateLimited");
