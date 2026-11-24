@@ -28,7 +28,6 @@ let language: Language = getStoredLanguage();
 const t = (key: TranslationKey): string => translate(language, key);
 
 const api = new SafeVisionApi();
-const isLocalhost = (): boolean => import.meta.env.DEV && ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 const labels: Record<Page, TranslationKey> = {
   overview: "navOverview", cameras: "navCameras", events: "navEvents",
   alerts: "navAlerts", subjects: "navSubjects", locations: "navLocations", settings: "navSettings",
@@ -60,8 +59,6 @@ class SafeVisionFrontend {
   private theme: Theme = this.initialTheme();
   private reduceMotion = localStorage.getItem("safevision-reduce-motion") === "true";
   private authStatus = t("authChecking");
-  private signInAvailable = false;
-  private localDevSession = false;
   private backendSession = false;
   private alertSocket: WebSocket | null = null;
   private reconnectTimer: number | null = null;
@@ -93,19 +90,17 @@ class SafeVisionFrontend {
   private readonly root = document.querySelector<HTMLDivElement>("#app");
 
   initializeTheme(): void { this.applyTheme(); this.applyMotionPreference(); }
-  activateLocalDevSession(): void { this.localDevSession = true; }
   async startPrivate(): Promise<void> {
     window.addEventListener("popstate", () => { this.page = this.pageFromLocation(); this.eventDetail = null; void this.loadPage(); });
     if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
     this.cameraPollTimer = window.setInterval(() => {
-      if (!this.backendSession || this.localDevSession || document.visibilityState === "hidden"
+      if (!this.backendSession || document.visibilityState === "hidden"
         || !["overview", "cameras", "events"].includes(this.page) || this.loading) return;
       void this.refreshCameraStatus();
     }, 30_000);
     await this.loadPage();
   }
   get authenticationStatus(): string { return this.authStatus; }
-  get canSignInBackend(): boolean { return !import.meta.env.DEV || this.signInAvailable; }
   setAuthenticationStatus(message: string): void { this.authStatus = message; }
   async hasValidBackendSession(): Promise<boolean> {
     try {
@@ -119,10 +114,6 @@ class SafeVisionFrontend {
       this.backendSession = false;
       this.authStatus = sessionRestoreMessage(error, t);
       if (!(error instanceof ApiError && error.status === 401)) console.error("Safe Vision AI: no se pudo validar la sesión", error);
-      if (import.meta.env.DEV && error instanceof ApiError && error.status === 401) {
-        await this.inspectAuthContract();
-        this.authStatus = "";
-      }
       return false;
     }
   }
@@ -149,7 +140,7 @@ class SafeVisionFrontend {
   }
 
   private startAlertStream(): void {
-    if (!this.backendSession || this.localDevSession) return;
+    if (!this.backendSession) return;
     this.stopAlertStream();
     this.alertStreamState = "connecting";
     void this.connectAlertStream();
@@ -183,7 +174,7 @@ class SafeVisionFrontend {
     }
   }
   private async connectAlertStream(): Promise<void> {
-    if (!this.backendSession || this.localDevSession) return;
+    if (!this.backendSession) return;
     try {
       const { ticket } = await api.wsTicket();
       if (!ticket || !this.backendSession) throw new Error("Missing WebSocket ticket");
@@ -240,7 +231,7 @@ class SafeVisionFrontend {
     }
   }
   private scheduleAlertReconnect(): void {
-    if (!this.backendSession || this.localDevSession || this.reconnectTimer !== null) return;
+    if (!this.backendSession || this.reconnectTimer !== null) return;
     this.alertStreamState = "reconnecting";
     const delay = Math.min(30_000, 1_000 * (2 ** Math.min(this.reconnectAttempt++, 5)));
     this.reconnectTimer = window.setTimeout(() => {
@@ -253,7 +244,7 @@ class SafeVisionFrontend {
     if (this.alertRefreshTimer !== null) window.clearTimeout(this.alertRefreshTimer);
     this.alertRefreshTimer = window.setTimeout(() => {
       this.alertRefreshTimer = null;
-      if (this.backendSession && !this.localDevSession && ["overview", "events", "alerts"].includes(this.page)) void this.loadPage();
+      if (this.backendSession && ["overview", "events", "alerts"].includes(this.page)) void this.loadPage();
     }, 150);
   }
   private applyTheme(): void { document.documentElement.dataset.theme = this.theme; }
@@ -262,19 +253,6 @@ class SafeVisionFrontend {
     const key = window.location.pathname.replace(/^\/+|\/+$/g, "") as Page;
     return key in labels ? key : "overview";
   }
-  private async inspectAuthContract(): Promise<void> {
-    try {
-      const spec = await api.request<{ paths?: Record<string, Record<string, { operationId?: string; summary?: string }>> }>("/openapi.json");
-      const operations = Object.entries(spec.paths ?? {}).flatMap(([path, methods]) => Object.entries(methods).map(([method, operation]) => ({ path, method, operation })));
-      this.signInAvailable = operations.some(({ path, method }) => path === "/api/auth/login" && method.toLowerCase() === "post")
-        && operations.some(({ path, method }) => path === "/api/auth/me" && method.toLowerCase() === "get");
-      this.authStatus = this.signInAvailable ? t("accessServiceReady") : t("accessUnavailable");
-    } catch (error) {
-      console.error("Safe Vision AI: no se pudo verificar el servicio de acceso", error);
-      this.authStatus = t("accessCheckFailed");
-    }
-  }
-
   private render(): void {
     if (!this.root) return;
     this.root.innerHTML = `<div class="app-frame">${this.topbar()}<main class="main-area" aria-busy="${this.loading}"><section class="view-content">${this.pageView()}</section></main></div>`;
@@ -338,7 +316,7 @@ class SafeVisionFrontend {
     return `<nav class="primary-navigation" aria-label="${t("navigationLabel")}">${nav.map(page => `<a class="nav-link ${this.page === page ? "selected" : ""}" href="/${page === "overview" ? "" : page}" data-page="${page}" ${this.page === page ? 'aria-current="page"' : ""}>${icon(page)}<span>${t(labels[page])}</span></a>`).join("")}</nav>`;
   }
   private topbar(): string {
-    return `<header class="app-header"><div class="header-main"><a class="header-brand" href="/" data-page="overview">${this.wordmark()}</a><div class="top-actions"><button class="icon-button" id="theme-toggle" aria-label="${t("themeToggle")}">${this.theme === "dark" ? "☼" : "◐"}</button><span class="account-state" aria-label="${t("profile")}">${this.localDevSession || this.backendSession ? t("profile") : t("account")}</span>${this.localDevSession || this.backendSession ? `<button class="button secondary local-logout" data-action="logout">${t("logout")}</button>` : ""}</div></div>${this.navigation()}</header>`;
+    return `<header class="app-header"><div class="header-main"><a class="header-brand" href="/" data-page="overview">${this.wordmark()}</a><div class="top-actions"><button class="icon-button" id="theme-toggle" aria-label="${t("themeToggle")}">${this.theme === "dark" ? "☼" : "◐"}</button><span class="account-state" aria-label="${t("profile")}">${this.backendSession ? t("profile") : t("account")}</span>${this.backendSession ? `<button class="button secondary" data-action="logout">${t("logout")}</button>` : ""}</div></div>${this.navigation()}</header>`;
   }
   private pageView(): string {
     let view = "";
@@ -474,23 +452,7 @@ class SafeVisionFrontend {
     this.root?.querySelectorAll<HTMLElement>("[data-alert-seen]").forEach(button => button.addEventListener("click", () => void this.markSeen(Number(button.dataset.alertSeen))));
   }
   private setTheme(theme: Theme): void { this.theme = theme; localStorage.setItem("safevision-theme", theme); this.applyTheme(); this.render(); }
-  private async logoutLocalSession(): Promise<void> {
-    try {
-      const localAuth = await import("@safevision/local-dev-access");
-      await localAuth.logoutLocalDev();
-    } catch (error) { console.error("Safe Vision AI: no se pudo cerrar la sesión local", error); }
-    this.localDevSession = false;
-    if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
-    this.cameraPollTimer = null;
-    this.stopAlertStream();
-    this.stopLiveVideo();
-    this.backendSession = false;
-    this.clearProtectedData();
-    this.authStatus = t("loggedOut");
-    if (this.root) await new AccessGate(this.root, this).start(true);
-  }
   private async logoutSession(): Promise<void> {
-    if (this.localDevSession) return this.logoutLocalSession();
     this.stopAlertStream();
     this.stopLiveVideo();
     if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
@@ -559,11 +521,6 @@ class SafeVisionFrontend {
         if (this.cameraPollTimer !== null) window.clearInterval(this.cameraPollTimer);
         this.cameraPollTimer = null;
         this.clearProtectedData();
-        if (this.localDevSession) {
-          const resource = pageResources[this.page].find(item => item !== "health") ?? "health";
-          this.dataErrors[resource] = t("backendSessionRequired");
-          return;
-        }
         this.loading = false;
         await new AccessGate(this.root, this).start();
         return;
@@ -636,28 +593,12 @@ class AccessGate {
   async start(forceLogin = false): Promise<void> {
     const token = new URL(window.location.href).searchParams.get("token");
     if (token !== null) { this.showAuthForm("reset", token); return; }
-    const localModeAvailable = await this.localDevModeAvailable();
-    if (!forceLogin && localModeAvailable) {
-      try {
-        const localAuth = await import("@safevision/local-dev-access");
-        if (await localAuth.hasLocalDevSession()) {
-          this.privateApp.activateLocalDevSession();
-          await this.privateApp.startPrivate();
-          return;
-        }
-      } catch (error) {
-        console.error("Safe Vision AI: no se pudo validar la sesión local", error);
-      }
-    }
     if (!forceLogin && await this.privateApp.hasValidBackendSession()) {
       await this.privateApp.startPrivate();
       return;
     }
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const backendSignInAvailable = this.privateApp.canSignInBackend;
-    const primaryAvailable = backendSignInAvailable || localModeAvailable;
-    if (isLocalhost() && !localModeAvailable && !backendSignInAvailable) this.privateApp.setAuthenticationStatus(t(import.meta.env.VITE_API_URL?.trim() ? "localDevNotConfigured" : "apiUrlMissing"));
-    this.root.innerHTML = `<main class="access-shell"><section class="access-brand"><div class="brand-lockup">${brandLogo("login-wordmark")}</div><div class="access-copy"><h1><span>${t("introMain")}</span><em>${t("introSupport")}</em></h1></div></section><section class="access-panel"><form class="login-card" id="login-form"><h2>${t("loginTitle")}</h2><label for="login-email">${t("email")}</label><input type="email" id="login-email" name="email" autocomplete="username" aria-label="${t("email")}" required><label for="login-password">${t("password")}</label><div class="password-field"><input type="password" id="login-password" name="password" autocomplete="current-password" aria-label="${t("password")}" required><button type="button" id="toggle-password" aria-label="${t("showPassword")}">${t("show")}</button></div><div class="auth-message" role="alert">${escapeHtml(this.privateApp.authenticationStatus)}</div><button class="button primary" type="submit" ${primaryAvailable ? "" : "disabled"}>${backendSignInAvailable ? t("loginTitle") : t("localDevLogin")}</button>${backendSignInAvailable && localModeAvailable ? `<button class="button secondary local-dev-login" type="button">${t("localDevLogin")}</button>` : ""}<div class="auth-options"><button type="button" data-auth-info="registration">${t("createAccount")}</button><button type="button" data-auth-info="recovery">${t("forgotPassword")}</button></div></form><footer>${t("loginBrandFooter")}</footer></section></main>`;
+    this.root.innerHTML = `<main class="access-shell"><section class="access-brand"><div class="brand-lockup">${brandLogo("login-wordmark")}</div><div class="access-copy"><h1><span>${t("introMain")}</span><em>${t("introSupport")}</em></h1></div></section><section class="access-panel"><form class="login-card" id="login-form"><h2>${t("loginTitle")}</h2><label for="login-email">${t("email")}</label><input type="email" id="login-email" name="email" autocomplete="username" aria-label="${t("email")}" required><label for="login-password">${t("password")}</label><div class="password-field"><input type="password" id="login-password" name="password" autocomplete="current-password" aria-label="${t("password")}" required><button type="button" id="toggle-password" aria-label="${t("showPassword")}">${t("show")}</button></div><div class="auth-message" role="alert">${escapeHtml(this.privateApp.authenticationStatus)}</div><button class="button primary" type="submit">${t("loginTitle")}</button><div class="auth-options"><button type="button" data-auth-info="registration">${t("createAccount")}</button><button type="button" data-auth-info="recovery">${t("forgotPassword")}</button></div></form><footer>${t("loginBrandFooter")}</footer></section></main>`;
     if (!reduceMotion) this.root.querySelector(".brand-lockup")?.classList.add("intro");
     this.root.querySelector<HTMLFormElement>("#login-form")?.addEventListener("submit", async event => {
       event.preventDefault();
@@ -670,30 +611,13 @@ class AccessGate {
       const submit = this.root.querySelector<HTMLButtonElement>("#login-form button[type='submit']");
       if (submit) { submit.disabled = true; submit.setAttribute("aria-busy", "true"); }
       try {
-        if (backendSignInAvailable) {
-          await this.privateApp.signInBackend(email.value, password.value);
-        } else if (localModeAvailable) {
-          await this.loginLocal(email.value, password.value);
-        } else if (message) message.textContent = t("accessUnavailable");
+        await this.privateApp.signInBackend(email.value, password.value);
       } catch (error) {
         if (message) message.textContent = this.authError(error);
       } finally {
         this.submitting = false;
         if (submit?.isConnected) { submit.disabled = false; submit.removeAttribute("aria-busy"); }
       }
-    });
-    this.root.querySelector<HTMLButtonElement>(".local-dev-login")?.addEventListener("click", async event => {
-      if (this.submitting) return;
-      const button = event.currentTarget as HTMLButtonElement;
-      const email = this.root.querySelector<HTMLInputElement>("#login-email");
-      const password = this.root.querySelector<HTMLInputElement>("#login-password");
-      const message = this.root.querySelector<HTMLElement>(".auth-message");
-      if (!email || !password || !email.validity.valid || !password.value) { if (message) message.textContent = t("invalidEmailPassword"); return; }
-      this.submitting = true;
-      button.disabled = true;
-      try { await this.loginLocal(email.value, password.value); }
-      catch (error) { if (message) message.textContent = error instanceof Error ? error.message : t("localModuleFailed"); }
-      finally { this.submitting = false; if (button.isConnected) button.disabled = false; }
     });
     this.root.querySelector("#toggle-password")?.addEventListener("click", event => { const input = this.root.querySelector<HTMLInputElement>("#login-password"); const button = event.currentTarget as HTMLButtonElement; if (!input) return; input.type = input.type === "password" ? "text" : "password"; button.textContent = input.type === "password" ? t("show") : t("hide"); button.setAttribute("aria-label", input.type === "password" ? t("showPassword") : t("hidePassword")); });
     this.root.querySelectorAll<HTMLElement>("[data-auth-info]").forEach(button => button.addEventListener("click", () => this.showAuthForm(button.dataset.authInfo === "registration" ? "register" : "forgot")));
@@ -754,19 +678,6 @@ class AccessGate {
         if (submit?.isConnected) { submit.disabled = false; submit.removeAttribute("aria-busy"); }
       }
     });
-  }
-  private async localDevModeAvailable(): Promise<boolean> {
-    if (!isLocalhost()) return false;
-    try {
-      const localAuth = await import("@safevision/local-dev-access");
-      return (await localAuth.getLocalDevStatus()).configured;
-    } catch { return false; }
-  }
-  private async loginLocal(email: string, password: string): Promise<void> {
-    const localAuth = await import("@safevision/local-dev-access");
-    await localAuth.loginLocalDev(email, password);
-    this.privateApp.activateLocalDevSession();
-    await this.privateApp.startPrivate();
   }
   private authError(error: unknown): string {
     if (error instanceof ApiConfigurationError) return t("apiUrlMissing");

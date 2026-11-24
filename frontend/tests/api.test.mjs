@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { createServer, resolveConfig } from "vite";
+import { createServer } from "vite";
 
 let server;
 let apiModule;
@@ -162,15 +162,6 @@ test("logout uses the backend endpoint and accepts HTTP 204", async () => {
   assert.equal(new URL(requestedUrl).pathname, "/api/auth/logout");
   assert.equal(requestedInit.method, "POST");
   assert.equal(requestedInit.credentials, "include");
-});
-
-test("Vite selects local access only for dev serve and the disabled stub for production", async () => {
-  const getReplacement = aliases => aliases.find(alias => alias.find === "@safevision/local-dev-access")?.replacement;
-  const developmentReplacement = getReplacement(server.config.resolve.alias);
-  const productionConfig = await resolveConfig({ configFile: "vite.config.ts" }, "build");
-  const productionReplacement = getReplacement(productionConfig.resolve.alias);
-  assert.match(developmentReplacement, /localDevAccess\.ts$/);
-  assert.match(productionReplacement, /localAccessDisabled\.ts$/);
 });
 
 test("WebSocket uses the documented endpoint and a temporary ticket", () => {
